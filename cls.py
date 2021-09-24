@@ -19,7 +19,8 @@ import os
 import argparse
 
 from data.ontoNotes_dataset import OntoNotes
-from model.prefix import BertForTokenClassification, BertPrefixModel
+from transformers import RobertaForTokenClassification, BertForTokenClassification
+from model.prefix import BertPrefixModel, RobertaPrefixModel
 from model.prefix import DeBertaPrefixModel
 from model.prefix import DeBertaV2PrefixModel
 from model.deberta import DebertaForTokenClassification
@@ -61,11 +62,13 @@ class Trainer_API:
 
         if args.model == 'bert':
             self.model_name = f'bert-{args.model_size}-uncased'
+        if args.model == 'roberta':
+            self.model_name = f'roberta-{args.model_size}'
         elif args.model == 'deberta':
             if args.model_size == 'base':
-                self.model_name = 'microsoft/deberta-xlarge'
-            elif args.model_size == 'large':
                 raise NotImplementedError
+            elif args.model_size == 'large':
+                self.model_name = 'microsoft/deberta-xlarge'
         elif args.model == 'debertaV2':
             if args.model_size == 'base':
                 self.model_name = 'microsoft/deberta-xlarge-v2'
@@ -77,7 +80,6 @@ class Trainer_API:
             elif args.model_size == 'large':
                 self.model_name = 'gpt2-large'
         
-        add_prefix_space = ADD_PREFIX_SPACE[args.model]
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_name,
             use_fast=True,
@@ -87,10 +89,6 @@ class Trainer_API:
 
         self.lm_config = AutoConfig.from_pretrained(
             self.model_name,
-            # num_labels=num_labels,
-            # label2id=self.label_to_id,
-            # id2label={i: l for l, i in self.label_to_id.items()},
-            # finetuning_task=task,
             revision='main',
         )
         dataset = OntoNotes(self.tokenizer)
@@ -128,18 +126,30 @@ class Trainer_API:
                     config=self.lm_config,
                     revision='main',
                 )
+            elif args.model == 'roberta':
+                self.model = RobertaPrefixModel.from_pretrained(
+                    self.model_name,
+                    config=self.lm_config,
+                    revision='main',
+                )
             elif args.model == 'gpt2':
                 raise NotImplementedError
 
         elif args.method == 'finetune':
-            if 'deberta' in self.model_name:
+            if args.model == 'bert':
                 self.model = DebertaForTokenClassification.from_pretrained(
                     self.model_name,
                     config=self.lm_config,
                     revision='main',
                 )
-            elif 'bert' in self.model_name:
+            elif args.model == 'bert':
                 self.model = BertForTokenClassification.from_pretrained(
+                    self.model_name,
+                    config=self.lm_config,
+                    revision='main',
+                )
+            elif args.model == 'roberta':
+                self.model = RobertaForTokenClassification.from_pretrained(
                     self.model_name,
                     config=self.lm_config,
                     revision='main',
@@ -177,16 +187,12 @@ class Trainer_API:
         decay_parameters = [name for name in decay_parameters if "bias" not in name]
         optimizer_grouped_parameters = [
             {
-                "params": [p for n, p in self.model.classifier.named_parameters() if n in decay_parameters],
+                "params": [p for n, p in self.model.named_parameters() if n in decay_parameters],
                 "weight_decay": self.weight_decay,
             },
             {
-                "params": [p for n, p in self.model.classifier.named_parameters() if n not in decay_parameters],
+                "params": [p for n, p in self.model.named_parameters() if n not in decay_parameters],
                 "weight_decay": 0.0,
-            },
-            {
-                "params": [p for n, p in self.model.prefix_encoder.named_parameters() if n not in decay_parameters],
-                "weight_decay": self.weight_decay,
             },
         ]            
         optimizer_kwargs = {
@@ -297,8 +303,8 @@ def construct_args():
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--pre_seq_len', type=int, default=4)
     parser.add_argument('--mid_dim', type=int, default=512)
-    parser.add_argument('--model', type=str,choices=['bert', 'deberta', 'debertaV2'], default='bert')
-    parser.add_argument('--model_size', type=str, choices=['base', 'large'], default='base')
+    parser.add_argument('--model', type=str,choices=['bert', 'roberta', 'deberta', 'debertaV2'], default='bert')
+    parser.add_argument('--model_size', type=str, choices=['base', 'large'], default='large')
     parser.add_argument('--method', type=str, choices=['prefix', 'finetune'], default='prefix')
     parser.add_argument('--epoch', type=int, default=30)
     parser.add_argument('--dropout', type=float, default=0.1)
@@ -310,7 +316,7 @@ def construct_args():
 
 def main():
     args = construct_args()
-    os.environ["CUDA_VISIBLE_DEVICES"] = '7'
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda
     train_api = Trainer_API(args)
     result = train_api.train()
     sys.stdout = open('result.txt', 'a')
